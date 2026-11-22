@@ -22,6 +22,8 @@ class DealDetailsController extends GetxController {
   final _quantityLeft = RxnInt();
   int? get quantityLeft => _quantityLeft.value;
 
+  Worker? _cartWorker;
+
   @override
   void onInit() {
     super.onInit();
@@ -31,15 +33,20 @@ class DealDetailsController extends GetxController {
       'deal_id': deal.id,
       'source': Get.parameters['source'] ?? 'unknown',
     });
-    // Whenever the cart changes, re-check this deal's remaining stock so the
-    // details screen never shows stale availability.
-    ever(cartService.itemCount, (_) => _recheckAvailability());
+    // เก็บ instance ของ Worker ไว้ เพื่อนำไปยกเลิกเมื่อ Controller ถูกปิด
+    _cartWorker = ever(cartService.itemCount, (_) => _recheckAvailability());
   }
 
   Future<void> _recheckAvailability() async {
+    if (isClosed) return;
     LogService.log('re-checking availability for deal ${deal.id}');
-    final fresh = await dealRepo.fetchById(deal.id);
-    _quantityLeft.value = fresh.quantityLeft;
+    try {
+      final fresh = await dealRepo.fetchById(deal.id);
+      if (isClosed) return;
+      _quantityLeft.value = fresh.quantityLeft;
+    } catch (e) {
+      LogService.error('re-check availability failed for deal ${deal.id}', e);
+    }
   }
 
   void addToCart() {
@@ -50,5 +57,11 @@ class DealDetailsController extends GetxController {
       snackPosition: SnackPosition.BOTTOM,
       duration: const Duration(seconds: 2),
     );
+  }
+
+  @override
+  void onClose() {
+    _cartWorker?.dispose();
+    super.onClose();
   }
 }
