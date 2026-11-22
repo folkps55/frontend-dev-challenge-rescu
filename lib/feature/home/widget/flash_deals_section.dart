@@ -4,12 +4,10 @@ import 'package:get/get.dart';
 import '../../../app_config.dart';
 import '../../../model/deal_model.dart';
 import '../../../routes/routes.dart';
+import '../../shared_widget/flash_sale_countdown.dart';
 import '../../shared_widget/the_network_image.dart';
 
-/// Horizontal flash-sale rail.
-///
-/// NOTE: the countdown is currently a static "Ends soon" label — turning it
-/// into a live per-deal countdown is one of the feature tasks in PROBLEM.md.
+/// Horizontal flash-sale rail with per-deal live countdowns.
 class FlashDealsSection extends StatelessWidget {
   final List<DealModel> deals;
 
@@ -39,6 +37,7 @@ class FlashDealsSection extends StatelessWidget {
             itemCount: deals.length,
             itemBuilder: (context, index) {
               final deal = deals[index];
+              final endsAt = deal.flashSaleEndsAt;
               return SizedBox(
                 width: 200,
                 child: Card(
@@ -90,11 +89,20 @@ class FlashDealsSection extends StatelessWidget {
                                       color: Colors.red.shade50,
                                       borderRadius: BorderRadius.circular(4),
                                     ),
-                                    child: Text('Ends soon',
-                                        style: TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w600,
-                                            color: Colors.red.shade700)),
+                                    child: endsAt != null
+                                        ? FlashSaleCountdown(
+                                            endsAt: endsAt,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.red.shade700,
+                                            ),
+                                          )
+                                        : Text('Ends soon',
+                                            style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600,
+                                                color: Colors.red.shade700)),
                                   ),
                                 ],
                               ),
