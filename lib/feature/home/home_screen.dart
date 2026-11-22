@@ -114,6 +114,7 @@ class HomeScreen extends GetView<HomeController> {
                   return DealCard(
                     key: ValueKey(deal.id),
                     deal: deal,
+                    position: index,
                   );
                 },
               ),

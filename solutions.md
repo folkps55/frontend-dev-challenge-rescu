@@ -151,3 +151,25 @@
 - **ดีลที่ไม่มีข้อมูลเวลาสิ้นสุด (`flashSaleEndsAt == null`):** แสดงข้อความ `'Ends soon'` เป็นค่าสำรองเพื่อไม่ให้ UI ว่างเปล่าหรือเกิด Null Error
 - **ความต่างของโซนเวลา (Timezone):** แปลง `endsAt` ด้วย `.toLocal()` ก่อนคำนวณส่วนต่างกับเวลาปัจจุบันของเครื่อง เพื่อให้เวลาถอยหลังตรงตามจริงในทุกโซนเวลา
 - **ตัวเลขขยับสั่นขณะเปลี่ยนวินาที:** กำหนด `fontFeatures: [FontFeature.tabularFigures()]` ใน `TextStyle` เพื่อให้ตัวเลขทุกตัวมีความกว้างเท่ากัน (Monospaced figures) ป้องกันป้าย Badge ขยาย-หดไปมาทุกวินาที
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
+### F-2 · Impression tracking
+
+**แนวทางการออกแบบและสถาปัตยกรรม (Architecture & Design):**
+เพิ่มระบบตรวจจับและบันทึกเหตุการณ์ `deal_impression` เข้าสู่ `AnalyticsService` เมื่อการ์ดดีลแต่ละใบปรากฏเข้ามาในพื้นที่มองเห็นจริงบนหน้าจอของผู้ใช้ (Viewport) อย่างน้อย 50% และหยุดค้างอยู่นาน 400 มิลลิวินาที โดยแยกความรับผิดชอบออกเป็น 3 ส่วนหลัก:
+1. **Widget ตรวจจับการมองเห็น (`lib/feature/shared_widget/deal_impression_tracker.dart`):** สร้าง `DealImpressionTracker` โดยใช้ `VisibilityDetector` (จากแพ็กเกจ `visibility_detector` ที่มีอยู่ใน `pubspec.yaml`) ตรวจสอบสัดส่วนการปรากฏบนหน้าจอ (`visibleFraction >= 0.5`) ร่วมกับ `Timer` หน่วงเวลา 400 มิลลิวินาทีก่อนเรียก Callback และยกเลิก `Timer` ใน `dispose()` เพื่อป้องกัน Memory Leak
+2. **ระบบกรองการนับซ้ำและบันทึกสถิติ (`lib/service/analytics_service.dart`):** เพิ่ม `_trackedImpressions` (`Set<String>`) ที่เก็บคีย์คู่ `'${source}:${dealId}'` เพื่อป้องกันการบันทึกซ้ำเมื่อผู้ใช้เลื่อนหน้าจอขึ้น-ลงในรอบการแสดงผลเดียวกัน พร้อมเพิ่มเมธอด `logImpression()` สำหรับส่ง Event `deal_impression` (`deal_id`, `source`, `position`) และ `resetImpressions(String source)` สำหรับล้างประวัติเฉพาะส่วนเมื่อมีการรีเฟรชข้อมูล
+3. **การเชื่อมต่อเข้ากับหน้าจอและ Controller (`deal_card.dart`, `flash_deals_section.dart`, `home_screen.dart`, `home_controller.dart`, `search_screen.dart`, `search_deals_controller.dart`):** ครอบการ์ดดีลทั้งในฟีดหลัก (`source: 'home'`), แถบแนะนำแนวนอน (`source: 'flash_rail'`) และหน้าค้นหา (`source: 'search'`) พร้อมส่งลำดับ `position: index` และสั่ง `resetImpressions()` เมื่อผู้ใช้ดึง Pull-to-refresh หรือเปลี่ยนคำค้นหา
+
+**เหตุผลที่เลือกวิธีนี้ (และทางเลือกอื่นที่ปัดตก):**
+- **แนวทางที่เลือกใช้:** ใช้ `VisibilityDetector` (เกณฑ์ `>= 0.5`) ร่วมกับ Dwell-time `Timer` 400ms และเก็บประวัติ Deduplication ไว้ที่ระดับ `AnalyticsService` ทำให้ตรวจจับการมองเห็นจริงได้แม่นยำทั้งรายการแนวตั้ง (`SliverList.builder`) และแนวนอน (`FlashDealsSection`) โดยไม่ผูกติดกับวงจรการสร้าง/ทำลาย Widget ของลิสต์
+- **ทางเลือกที่ 1 — บันทึก Impression ใน `initState()` หรือ `build()` ของ `DealCard` (ปัดตก):** `SliverList.builder` และ `ListView.builder` จะสร้าง Widget ล่วงหน้าไว้ในระยะ `cacheExtent` ก่อนที่การ์ดจะเลื่อนเข้ามาในหน้าจอจริง การบันทึกตั้งแต่ตอนสร้าง Widget จะทำให้เกิด Impression ปลอมของการ์ดที่ผู้ใช้ยังไม่เคยเลื่อนไปถึง
+- **ทางเลือกที่ 2 — เก็บสถานะว่าเคยยิง Event แล้วไว้ใน `State` ของ `DealImpressionTracker` (ปัดตก):** เมื่อผู้ใช้เลื่อนรายการลงไปไกลๆ `SliverList.builder` จะทำลาย (`dispose`) State ของการ์ดด้านบนทิ้ง พอผู้ใช้เลื่อนย้อนกลับขึ้นมาการ์ดจะถูกสร้าง `State` ใหม่และยิง Impression ซ้ำทันที การเก็บไว้ใน `AnalyticsService` ที่คงอยู่ตลอด Session จึงป้องกันการนับซ้ำข้ามการเลื่อนได้ดีที่สุด
+- **ทางเลือกที่ 3 — คำนวณตำแหน่งการ์ดจาก `ScrollController` ด้วยตนเอง (ปัดตก):** ซับซ้อนและดูแลรักษายากเมื่อหน้า Home มีทั้งการเลื่อนแนวตั้ง (`CustomScrollView`) และแนวนอน (`FlashDealsSection`) ซ้อนกัน การใช้ `VisibilityDetector` รองรับการคำนวณพื้นที่ซ้อนทับกับ Viewport ได้ครอบคลุมทั้งสองแกน
+
+**Edge Cases ที่พิจารณา:**
+- **การไถหน้าจอผ่านด้วยความเร็วสูง (Fast Scroll):** หน่วงเวลา 400 มิลลิวินาทีด้วย `Timer` และยกเลิกทันทีหากการ์ดเลื่อนออกจากหน้าจอ (`visibleFraction < 0.5`) ก่อนครบเวลา เพื่อยืนยันว่าผู้ใช้หยุดมองเห็นการ์ดนั้นจริง
+- **ผู้ใช้ออกจากหน้าจอก่อนครบ 400 มิลลิวินาที:** เรียก `_timer?.cancel()` ในเมธอด `dispose()` ของ `DealImpressionTracker` เพื่อป้องกันการยิง Event ค้างหลังจากออกจากหน้าจอไปแล้ว
+- **ดีลใบเดียวกันปรากฏทั้งในแถบ `flash_rail` และฟีดหลัก `home`:** ใช้คีย์ผสม `'${source}:${dealId}'` ใน `_trackedImpressions` เพื่อให้สามารถวัดประสิทธิภาพการมองเห็นแยกตามตำแหน่งที่แสดงผล (`flash_rail` เทียบกับ `home`) ได้อย่างถูกต้องโดยไม่ขัดกันเอง
+- **การรีเฟรชฟีดหรือเปลี่ยนคำค้นหา:** เรียก `resetImpressions()` เฉพาะ `source` ที่เกี่ยวข้องเมื่อดึง Pull-to-refresh (`HomeController.refreshDeals`) หรือเมื่อลบ/เปลี่ยนคำค้นหา (`SearchDealsController`) เพื่อให้ผลลัพธ์ชุดใหม่สามารถนับ Impression ได้ตามปกติ
+- **กรณีที่ตั้งใจไม่ทำ:** การรวบส่ง Event แบบ Batch เป็นชุดใหญ่ เนื่องจาก `AnalyticsService` ออกแบบมาให้บันทึกทีละเหตุการณ์แบบ Real-time และมีระบบ Deduplication จำกัดปริมาณการยิงต่อรอบไว้อยู่แล้ว

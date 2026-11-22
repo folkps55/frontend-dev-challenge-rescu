@@ -2,6 +2,7 @@ import 'package:get/get.dart';
 
 import '../../model/deal_model.dart';
 import '../../repository/deal_repo.dart';
+import '../../service/analytics_service.dart';
 import '../../util/log_service.dart';
 
 class SearchDealsController extends GetxController {
@@ -27,12 +28,19 @@ class SearchDealsController extends GetxController {
     );
   }
 
+  void _resetSearchImpressions() {
+    if (Get.isRegistered<AnalyticsService>()) {
+      Get.find<AnalyticsService>().resetImpressions('search');
+    }
+  }
+
   void onQueryChanged(String query) {
     _query.value = query;
 
     // หากผู้ใช้ลบข้อความจนว่าง ให้ยกเลิกผลลัพธ์ของ Request ที่ค้างอยู่และรีเซ็ตหน้าจอทันที
     if (query.trim().isEmpty) {
       _latestRequestId++;
+      _resetSearchImpressions();
       results.clear();
       hasSearched.value = false;
       isLoading.value = false;
@@ -52,6 +60,7 @@ class SearchDealsController extends GetxController {
       // ทิ้งผลลัพธ์ทันทีหากมีคำค้นหาใหม่ถูกส่งออกไปหลังจาก Request นี้
       if (requestId != _latestRequestId) return;
 
+      _resetSearchImpressions();
       results.assignAll(found);
     } catch (e) {
       if (requestId != _latestRequestId) return;

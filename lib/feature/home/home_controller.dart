@@ -4,6 +4,7 @@ import 'package:pull_to_refresh/pull_to_refresh.dart';
 
 import '../../model/deal_model.dart';
 import '../../repository/deal_repo.dart';
+import '../../service/analytics_service.dart';
 import '../../util/log_service.dart';
 
 class HomeController extends GetxController {
@@ -60,6 +61,14 @@ class HomeController extends GetxController {
     flashDeals.assignAll(await dealRepo.fetchFlashDeals());
   }
 
+  void _resetFeedImpressions() {
+    if (Get.isRegistered<AnalyticsService>()) {
+      final analytics = Get.find<AnalyticsService>();
+      analytics.resetImpressions('home');
+      analytics.resetImpressions('flash_rail');
+    }
+  }
+
   Future<void> refreshDeals() async {
     final int epoch = ++_feedEpoch;
     _isRefreshing = true;
@@ -72,6 +81,7 @@ class HomeController extends GetxController {
 
       _page = 1;
       _totalPages = res.totalPages;
+      _resetFeedImpressions();
       deals.assignAll(res.items);
       refreshController.refreshCompleted();
       refreshController.resetNoData();
