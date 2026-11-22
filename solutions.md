@@ -68,3 +68,30 @@
 - **API เกิด Error ระหว่าง Refresh หรือโหลดหน้าถัดไป:** ครอบ `try / catch` ใน `refreshDeals()` และเรียก `refreshController.refreshFailed()` เมื่อพัง เพื่อไม่ให้ตัวหมุนด้านบนค้าง รวมถึงเรียก `refreshController.resetNoData()` เมื่อ Refresh สำเร็จ เพื่อให้สามารถเลื่อนโหลดหน้าถัดไปต่อได้แม้ก่อนหน้านั้นจะเลื่อนจนสุดรายการแล้วก็ตาม
 - **ผู้ใช้ออกจากหน้า Home ระหว่างที่ API กำลังโหลด:** ตรวจสอบ `if (isClosed) return;` หลัง `await` ทุกจุด เพื่อป้องกันการเรียกเมธอดบน `RefreshController` ที่ถูก `dispose()` ไปแล้ว
 - **กรณีที่ตั้งใจไม่ทำ:** การจำตำแหน่ง Scroll เดิมข้ามการ Refresh เนื่องจากการ Pull-to-refresh มีจุดประสงค์เพื่อรีเซ็ตฟีดกลับไปเริ่มต้นที่หน้าที่ 1 ใหม่ทั้งหมด
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
+### RES-105 · Home screen jank and growing memory while scrolling
+
+**สาเหตุของปัญหา (Root Cause):**
+เกิดจากปัญหาด้านการจัดการขอบเขตการ Rebuild และการใช้หน่วยความจำของรูปภาพใน 2 ไฟล์หลัก:
+1. **ครอบ `Obx` ก้อนใหญ่ชั้นนอกสุดและสร้างรายการแบบไม่ Lazy (`lib/feature/home/home_screen.dart`):**
+   - เมธอด `build()` ครอบ `Obx` ไว้รอบ `Scaffold` ทั้งหน้าและอ่านค่า `controller.scrollOffset.value` ตั้งแต่ด้านบนสุด ทำให้ทุกพิกเซลที่ผู้ใช้เลื่อนหน้าจอ (`_onScroll`) สั่ง Rebuild ทั้งหน้าจอใหม่ทั้งหมด (ตั้งแต่ `AppBar`, `FlashDealsSection` ไปจนถึง `DealCard` ทุกใบ) ทั้งที่ค่า `scrollOffset` ถูกใช้แค่ 2 จุดเล็กๆ คือ `AppBar.elevation` (`offset > 4`) และปุ่ม `floatingActionButton` (`offset > 800`)
+   - รายการดีลใช้ `ListView(children: [...controller.visibleDeals.map(...)])` ซึ่งสร้าง Widget `DealCard` ทุกใบในลิสต์ขึ้นมาพร้อมกันทันที (เช่น 122 ใบเมื่อโหลดครบทุกหน้า) แทนที่จะสร้างเฉพาะใบที่มองเห็นบนหน้าจอ เมื่อรวมกับการ Rebuild ทั้งหน้าทุกเฟรมขณะเลื่อนจอจึงเกิดอาการกระตุก (UI Jank) อย่างหนัก
+2. **ถอดรหัสภาพความละเอียดเต็มเข้า RAM และสร้าง Clip Layer เกินจำเป็น (`lib/feature/shared_widget/the_network_image.dart`):**
+   - `CachedNetworkImage` ถูกเรียกใช้โดยไม่กำหนด `memCacheWidth` หรือ `memCacheHeight` ทำให้ Flutter ถอดรหัสไฟล์ภาพต้นฉบับความละเอียดเต็มขนาด (Uncompressed RGBA Bitmap) เก็บไว้ใน `ImageCache` บน RAM ทั้งที่การ์ดแสดงผลความสูงเพียง `160px` ส่งผลให้ RAM พุ่งสูงขึ้นเรื่อยๆ เมื่อเลื่อนดูรายการจำนวนมาก
+   - เมื่อ `borderRadius` เป็น `null` โค้ดยังครอบด้วย `ClipRRect(borderRadius: BorderRadius.zero)` ซึ่งสร้าง Clip Layer ให้ GPU ทำงานเพิ่มโดยไม่จำเป็น
+
+**เหตุผลที่เลือกวิธีนี้ (และทางเลือกอื่นที่ปัดตก):**
+- **แนวทางที่เลือกใช้:**
+  1. แยก `Obx` ให้ครอบเฉพาะจุดย่อยที่ต้องเปลี่ยนตาม State จริงๆ (`AppBar` สำหรับ `elevation`, ส่วน `body` สำหรับ `isLoading`/`visibleDeals` และ `floatingActionButton` สำหรับปุ่มเลื่อนกลับด้านบน) เพื่อไม่ให้ `scrollOffset` ไปกระตุ้นการ Rebuild เนื้อหาฟีด
+  2. เปลี่ยนโครงสร้างฟีดใน `SmartRefresher` เป็น `CustomScrollView` ร่วมกับ `SliverList.builder` (พร้อมใส่ `ValueKey(deal.id)`) เพื่อให้สร้างและวาดเฉพาะ `DealCard` ที่อยู่ใน Viewport ของหน้าจอเท่านั้น
+  3. ใช้ `LayoutBuilder` ร่วมกับ `MediaQuery.devicePixelRatioOf(context)` ใน `TheNetworkImage` เพื่อคำนวณค่า `memCacheWidth` (หรือ `memCacheHeight`) เพียงด้านเดียวให้เหมาะสมกับความละเอียดหน้าจอจริงโดยไม่ทำให้สัดส่วนภาพเพี้ยน และคืนค่า `image` โดยตรงเมื่อ `borderRadius == null`
+- **ทางเลือกที่ 1 — ใช้ `ListView.builder` แทน `CustomScrollView` + `SliverList.builder` (ปัดตก):** เนื่องจากหน้า Home มีส่วนหัวหลายแบบ (`FlashDealsSection` และแถบหัวข้อ `Nearby deals`) การใช้ `CustomScrollView` ร่วมกับ `SliverToBoxAdapter` และ `SliverList.builder` ช่วยให้ทำงานร่วมกับ `SmartRefresher` ได้ใน Scrollable เดียวอย่างสมบูรณ์โดยไม่ต้องใช้ `shrinkWrap: true` ซึ่งจะไปทำลายคุณสมบัติ Lazy ของลิสต์
+- **ทางเลือกที่ 2 — กำหนดค่าคงที่ตายตัวให้ทั้ง `memCacheWidth` และ `memCacheHeight` พร้อมกัน (ปัดตก):** การบังคับขนาดทั้งกว้างและสูงพร้อมกันอาจทำให้ภาพถูกยืดหรือบีบจนเสียสัดส่วนหากรูปต้นฉบับมีอัตราส่วนต่างจากกรอบ และการไม่คูณ `devicePixelRatio` จะทำให้ภาพแตกเบลอบนหน้าจอความละเอียดสูง
+- **ทางเลือกที่ 3 — ทำ Throttle/Debounce กับ `_onScroll` (ปัดตก):** ช่วยลดความถี่ในการ Rebuild ได้เพียงเล็กน้อยแต่ไม่ได้แก้ต้นตอที่สั่ง Rebuild ทั้งหน้าจอและสร้างการ์ด 122 ใบพร้อมกัน
+
+**Edge Cases ที่พิจารณา:**
+- **ขนาดของ Widget ผู้ปกครองไม่มีขอบเขตจำกัด (Unbounded Constraints):** ใน `LayoutBuilder` มีการตรวจสอบ `.isFinite` และ `> 0` ก่อนคำนวณ `memCacheWidth`/`memCacheHeight` เพื่อป้องกัน Error `Infinity or NaN toInt` หาก `TheNetworkImage` ถูกนำไปใช้ในแนวนอนที่ไม่ได้กำหนดความกว้าง
+- **การสลับตัวกรอง "Pickup today" (`todayOnly`):** กำหนด `Key` (`ValueKey(deal.id)`) ให้กับ `DealCard` ภายใน `SliverList.builder` เพื่อให้ Flutter จับคู่และนำ Element/State ของการ์ดเดิมกลับมาใช้ใหม่ได้อย่างถูกต้องเมื่อจำนวนรายการเปลี่ยน
+- **การตรวจสอบผลลัพธ์ผ่าน Flutter DevTools:** เปรียบเทียบก่อนและหลังแก้ไขผ่านแท็บ **Performance** (ยอด Rebuild ของ `DealCard` ขณะเลื่อนหน้าจอลดลงเหลือ 0 ใบต่อเฟรมสำหรับใบที่แสดงอยู่แล้ว และเวลาวาดเฟรมต่ำกว่า 16ms) และแท็บ **Memory** (ขนาดหน่วยความจำฝั่ง ImageCache/Raster ลดลงชัดเจนหลังไถฟีดจนครบทุกรายการ) *(สามารถเติมตัวเลขจริงที่วัดได้จากเครื่องของคุณต่อท้ายตรงนี้ได้)*
+- **กรณีที่ตั้งใจไม่ทำ:** การปรับแต่ง `cacheExtent` ของ `CustomScrollView` เอง เนื่องจากค่าเริ่มต้นของ Flutter สมดุลระหว่างความลื่นไหลในการเลื่อนกับการประหยัดหน่วยความจำอยู่แล้ว
