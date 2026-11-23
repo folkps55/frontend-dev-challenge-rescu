@@ -15,12 +15,28 @@ class PickupCountdown extends StatefulWidget {
 }
 
 class _PickupCountdownState extends State<PickupCountdown> {
+  Timer? _timer;
+
   @override
   void initState() {
     super.initState();
-    Timer.periodic(const Duration(seconds: 1), (_) {
-      setState(() {});
-    });
+    // เริ่มจับเวลาเฉพาะกรณีที่ยังไม่ถึงเวลารับของ
+    if (!widget.pickupStart.difference(DateTime.now()).isNegative) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
+        setState(() {});
+        // หยุด Timer ทันทีเมื่อถึงเวลารับของแล้ว เพราะข้อความจะไม่เปลี่ยนอีก
+        if (widget.pickupStart.difference(DateTime.now()).isNegative) {
+          _timer?.cancel();
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
   @override

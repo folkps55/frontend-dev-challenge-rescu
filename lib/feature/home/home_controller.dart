@@ -4,6 +4,7 @@ import 'package:pull_to_refresh/pull_to_refresh.dart';
 
 import '../../model/deal_model.dart';
 import '../../repository/deal_repo.dart';
+import '../../service/analytics_service.dart';
 import '../../util/log_service.dart';
 
 class HomeController extends GetxController {
@@ -23,6 +24,11 @@ class HomeController extends GetxController {
   int _page = 1;
   int _totalPages = 1;
   bool _isFetchingMore = false;
+  bool _isRefreshing = false;
+
+  // ตัวนับรอบของข้อมูล (Epoch/Generation token) เพิ่มค่าทุกครั้งที่ Refresh
+  // เพื่อใช้ตัดทิ้ง Request ของ loadMore() รอบเก่าที่ยังค้างอยู่
+  int _feedEpoch = 0;
 
   bool get hasMore => _page < _totalPages;
 
@@ -55,32 +61,79 @@ class HomeController extends GetxController {
     flashDeals.assignAll(await dealRepo.fetchFlashDeals());
   }
 
+  void _resetFeedImpressions() {
+    if (Get.isRegistered<AnalyticsService>()) {
+      final analytics = Get.find<AnalyticsService>();
+      analytics.resetImpressions('home');
+      analytics.resetImpressions('flash_rail');
+    }
+  }
+
   Future<void> refreshDeals() async {
-    _page = 1;
-    final res = await dealRepo.fetchDeals(page: 1);
-    _totalPages = res.totalPages;
-    deals.assignAll(res.items);
-    refreshController.refreshCompleted();
+    final int epoch = ++_feedEpoch;
+    _isRefreshing = true;
+    // ยกเลิกสถานะการโหลดหน้าถัดไปของรอบเก่าทันที
+    _isFetchingMore = false;
+
+    try {
+      final res = await dealRepo.fetchDeals(page: 1);
+      if (isClosed || epoch != _feedEpoch) return;
+
+      _page = 1;
+      _totalPages = res.totalPages;
+      _resetFeedImpressions();
+      deals.assignAll(res.items);
+      refreshController.refreshCompleted();
+      refreshController.resetNoData();
+    } catch (e) {
+      if (isClosed || epoch != _feedEpoch) return;
+      LogService.error('refresh deals failed', e);
+      refreshController.refreshFailed();
+    } finally {
+      if (epoch == _feedEpoch) {
+        _isRefreshing = false;
+      }
+    }
   }
 
   Future<void> loadMore() async {
+    if (_isRefreshing) {
+      refreshController.loadComplete();
+      return;
+    }
     if (_isFetchingMore) return;
     if (!hasMore) {
       refreshController.loadNoData();
       return;
     }
+
+    final int epoch = _feedEpoch;
+    final int nextPage = _page + 1;
     _isFetchingMore = true;
-    _page++;
+
     try {
-      final res = await dealRepo.fetchDeals(page: _page);
+      final res = await dealRepo.fetchDeals(page: nextPage);
+      // หากผู้ใช้กด Refresh ระหว่างที่หน้านี้กำลังโหลดอยู่ ให้ทิ้งผลลัพธ์เก่าทันที
+      if (isClosed || epoch != _feedEpoch) return;
+
+      _page = nextPage;
       _totalPages = res.totalPages;
       deals.addAll(res.items);
+
+      if (hasMore) {
+        refreshController.loadComplete();
+      } else {
+        refreshController.loadNoData();
+      }
     } catch (e) {
+      if (isClosed || epoch != _feedEpoch) return;
       LogService.error('loadMore failed', e);
-      _page--;
+      refreshController.loadFailed();
+    } finally {
+      if (epoch == _feedEpoch) {
+        _isFetchingMore = false;
+      }
     }
-    _isFetchingMore = false;
-    refreshController.loadComplete();
   }
 
   void scrollToTop() {

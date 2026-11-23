@@ -5,11 +5,18 @@ class CartItemModel {
   final DealModel deal;
   int quantity;
 
-  /// Stock hold for this line item. The starter app does not reserve stock —
-  /// see the "Reservations" feature task.
+  /// Stock hold for this line item.
   ReservationModel? reservation;
 
-  CartItemModel({required this.deal, this.quantity = 1, this.reservation});
+  /// True while an optimistic add/quantity update is awaiting backend confirmation.
+  bool isReserving;
+
+  CartItemModel({
+    required this.deal,
+    this.quantity = 1,
+    this.reservation,
+    this.isReserving = false,
+  });
 
   num get lineTotal => deal.price * quantity;
 }
